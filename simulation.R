@@ -9,42 +9,7 @@ library(grf)          # Generalized Random Forest for causal inference
 library(rlearner)     # Implements R-learner framework
 library(xgboost)      # Gradient Boosting framework
 require(caret)        # Tools for cross-validation and data splitting
-
-# Define R-learner using XGBoost
-rxgboost <- function(X, W, Y) {
-  kfold <- 10  # Number of cross-validation folds
-  flds <- createFolds(Y, k = kfold, list = TRUE, returnTrain = FALSE)  # Create fold indices
-  X <- as.matrix(X)  # Ensure covariates are in matrix format
-  m.hat <- c()  # Placeholder for predicted outcomes (m(X))
-  
-  # Estimate m(X) (response function) via cross-validation
-  for(i in 1:kfold) {
-    m.hat <- c(
-      m.hat,
-      predict(xgboost(
-        data = X[-flds[[i]], ], label = Y[-flds[[i]]],  # Train on all but the current fold
-        max.depth = 2, eta = 0.2, nthread = 2, nrounds = 20, 
-        objective = "reg:squarederror", eval_metric = "rmse", verbose = 0), 
-        X[flds[[i]], ])  # Predict on the current fold
-    )
-  }
-  
-  # Compute pseudo-outcomes for R-learner
-  r.target <- (Y - m.hat) / (W - 0.5)
-  
-  # Train XGBoost model to estimate treatment effects from pseudo-outcomes
-  r.mod <- xgboost(
-    data = X, label = r.target,
-    max.depth = 2, eta = 0.2, nthread = 2, nrounds = 20, 
-    objective = "reg:squarederror", verbose = 0)
-  
-  return(list(r.mod))  # Return trained model
-}
-
-# Function to predict treatment effects using the trained R-learner
-predict_rxgboost <- function(mod, X) {
-  return(predict(mod[[1]], as.matrix(X)))  # Return predictions
-}
+library(matrixStats)
 
 # Function to generate synthetic data for training and evaluation
 gen_test <- function(n.sample) {
@@ -76,11 +41,24 @@ gen_test <- function(n.sample) {
 }
 
 # Number of bootstrap samples
-B <- 2
+B <- 10
 
 # Training and validation sample sizes
 train.n.sample <- 1000
 val.n.sample <- 1000
+
+#shards
+shards = 5
+
+# unlearn individual's index
+customers_to_unlearn = 1
+unlearning_index = sample(1:train.n.sample, customers_to_unlearn)
+
+# Assuming 'my_list' is your list structure
+which_list <- function(value, list_data) {
+  return(names(list_data)[sapply(list_data, function(x) value %in% x)])
+}
+
 
 # Generate validation data for control and treatment
 val.control.data <- gen_test(val.n.sample)
@@ -125,34 +103,39 @@ for(b in 1:B) {
   train.X <- rbind(train.control.X, train.treatment.X)
   train.true.tau <- c(train.control.tau, train.treatment.tau)
   
-  # Split data into 5 shards
-  shard.id <- split(1:length(train.Y), cut(sample(1:length(train.Y)), breaks = 5, labels = FALSE))
+  # Split data into "shards" shards
+  shard.id <- split(1:length(train.Y), cut(sample(1:length(train.Y)), breaks = shards, labels = FALSE))
+  which_shard_needs_retraining <- which_list(unlearning_index, shard.id)
   
   # Train causal forest on the entire dataset
   start.time <- Sys.time()
-  mod.all <- causal_forest(X = train.X, W = train.W, Y = train.Y)  # Fit causal forest model
+  mod.all <- causal_forest(X = train.X, W = train.W, Y = train.Y, num.trees = 2000)  # Fit causal forest model
   val.pred.all[, b] <- predict(mod.all, val.X)[[1]]  # Predict treatment effects
   end.time <- Sys.time()
   time.spent[b, 1] <- end.time - start.time  # Record computation time
   
   # Train causal forest on each shard and aggregate predictions
-  start.time <- Sys.time()
-  pred.shard.matrix <- matrix(0, nrow = length(train.Y), ncol = 5)
-  for(s in 1:5) {
-    mod.shard <- causal_forest(X = train.X[shard.id[[s]], ], W = train.W[shard.id[[s]]], Y = train.Y[shard.id[[s]]])
+  pred.shard.matrix <- matrix(0, nrow = length(train.Y), ncol = shards)
+  for(s in 1:shards) {
+    print(paste0("working on shard #",s))
+    if(which_shard_needs_retraining == s){
+      start.time <- Sys.time()
+      mod.shard <- causal_forest(X = train.X[shard.id[[s]], ], W = train.W[shard.id[[s]]], Y = train.Y[shard.id[[s]]])
+      end.time <- Sys.time()
+      time.spent[b, 2] <- end.time - start.time  # Record computation time
+    } else{
+      mod.shard <- causal_forest(X = train.X[shard.id[[s]], ], W = train.W[shard.id[[s]]], Y = train.Y[shard.id[[s]]]) 
+    }
     pred.shard.matrix[, s] <- predict(mod.shard, val.X)[[1]]
   }
   val.pred.shard[, b] <- rowMeans(pred.shard.matrix)  # Average shard predictions
-  end.time <- Sys.time()
-  time.spent[b, 2] <- end.time - start.time  # Record computation time
-  
   print(time.spent[b, ])
 }
 
 # Initialize storage for RMSE, AUTOC, and Profit
 rmse.summary <- matrix(0, nrow = B, ncol = 2)
 autoc.summary <- matrix(0, nrow = B, ncol = 2)
-phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+phis <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 profit.summary <- array(0, dim = c(B, 2, length(phis)))  # 3D array: [B x 2 x phis]
 
 for(b in 1:B) {
@@ -176,39 +159,46 @@ for(b in 1:B) {
   }
 }
 
-
-# Load necessary library for statistical operations
-library(matrixStats)
-
-# Summarize RMSE and AUTOC
-summary_table <- data.frame(
-  Metric = c("RMSE", "AUTOC"),
-  Full_Model = paste0(round(colMeans(rmse.summary), 2), " (", round(colSds(rmse.summary), 2), ")"),
-  Shard_Model = paste0(round(colMeans(autoc.summary), 2), " (", round(colSds(autoc.summary), 2), ")")
+# Summarize results
+data.frame(
+  RMSE = paste0(round(colMeans(rmse.summary), 2), " (", round(colSds(rmse.summary), 2), ")"),
+  AUTOC = paste0(round(colMeans(autoc.summary), 2), " (", round(colSds(autoc.summary), 2), ")")
 )
 
-# Summarize computation time
-time_summary <- data.frame(
-  Metric = c("Time_Full_Model", "Time_Shard_Model"),
-  Mean_Time = colMeans(time.spent),
-  SD_Time = colSds(time.spent)
-)
+# Compute average and standard deviation of computation time
+colMeans(time.spent)
+colSds(time.spent)
 
-# Summarize Profit Results for each phi
-profit_mean <- apply(profit.summary, c(2, 3), mean)  # Mean profit [2 x phis]
-profit_sd <- apply(profit.summary, c(2, 3), sd)      # Std dev profit [2 x phis]
+# Summarize profit for each phi
+profit.mean <- apply(profit.summary, c(2, 3), mean)  # Mean profit [2 x phis]
+profit.sd <- apply(profit.summary, c(2, 3), sd)      # Std dev profit [2 x phis]
 
-# Create a summary data frame for profit
+# Create a summary data frame
 profit_summary <- data.frame(
-  Phi = rep(phis, each = 2),  # Each phi repeated for Full and Shard models
-  Model = rep(c("Full_Model", "Shard_Model"), times = length(phis)),
-  Mean_Profit = c(profit_mean[1, ], profit_mean[2, ]),
-  SD_Profit = c(profit_sd[1, ], profit_sd[2, ])
+  Phi = rep(phis, each = 2),  # Repeat phi values for full and shard models
+  Model = rep(c("Full", "Shard"), times = length(phis)),  # Model type
+  Mean = as.vector(profit.mean),  # Mean profits
+  SD = as.vector(profit.sd)       # Standard deviations
 )
 
-# Combine all summaries into a list for display
-list(
-  RMSE_AUTOC = summary_table,
-  Time_Summary = time_summary,
-  Profit_Summary = profit_summary
-)
+# Convert the 3D array into a tidy data frame for detailed analysis
+profit_df <- data.frame()
+
+for (phi_idx in seq_along(phis)) {
+  for (b in 1:B) {
+    profit_df <- rbind(profit_df, data.frame(
+      Bootstrap = b,
+      Phi = phis[phi_idx],
+      Full_Profit = profit.summary[b, 1, phi_idx],
+      Shard_Profit = profit.summary[b, 2, phi_idx]
+    ))
+  }
+}
+
+profit_df %>%
+  group_by(Phi) %>%
+  summarize(mean_full_profit = mean(Full_Profit),
+            mean_shard_profit = mean(Shard_Profit),
+            difference = mean_full_profit - mean_shard_profit)
+
+

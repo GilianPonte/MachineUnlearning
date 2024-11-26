@@ -40,25 +40,25 @@ gen_test <- function(n.sample) {
   return(list(Y.treatment, Y.control, covariate, true.tau, exp.Y.treatment, exp.Y.control))
 }
 
-# Number of bootstrap samples
-B <- 10
-
-# Training and validation sample sizes
-train.n.sample <- 1000
-val.n.sample <- 1000
-
-#shards
-shards = 5
-
-# unlearn individual's index
-customers_to_unlearn = 1
-unlearning_index = sample(1:train.n.sample, customers_to_unlearn)
-
 # Assuming 'my_list' is your list structure
 which_list <- function(value, list_data) {
   return(names(list_data)[sapply(list_data, function(x) value %in% x)])
 }
 
+# Number of bootstrap samples
+B <- 1
+
+# Training and validation sample sizes
+n = 1000
+train.n.sample <- n
+val.n.sample <- n*0.25
+
+#shards
+shards = 2
+
+# unlearn individual's index
+customers_to_unlearn = 1 # specifies how many customers should be unlearned
+unlearning_index = sample(1:train.n.sample, customers_to_unlearn) # samples a customers to be unlearned
 
 # Generate validation data for control and treatment
 val.control.data <- gen_test(val.n.sample)
@@ -115,7 +115,7 @@ for(b in 1:B) {
   time.spent[b, 1] <- end.time - start.time  # Record computation time
   
   # Train causal forest on each shard and aggregate predictions
-  pred.shard.matrix <- matrix(0, nrow = length(train.Y), ncol = shards)
+  pred.shard.matrix <- matrix(0, nrow = length(val.Y), ncol = shards)
   for(s in 1:shards) {
     print(paste0("working on shard #",s))
     if(which_shard_needs_retraining == s){
@@ -132,73 +132,94 @@ for(b in 1:B) {
   print(time.spent[b, ])
 }
 
+
 # Initialize storage for RMSE, AUTOC, and Profit
+phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 rmse.summary <- matrix(0, nrow = B, ncol = 2)
 autoc.summary <- matrix(0, nrow = B, ncol = 2)
-phis <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
-profit.summary <- array(0, dim = c(B, 2, length(phis)))  # 3D array: [B x 2 x phis]
+profit.summary <- array(0, dim = c(B, 2, length(phis)))  # [B x 2 x phis]
 
-for(b in 1:B) {
-  # Compute RMSE
-  rmse.summary[b, 1] <- mean((val.pred.all[, b] - val.true.tau)^2)  # Full model
-  rmse.summary[b, 2] <- mean((val.pred.shard[, b] - val.true.tau)^2)  # Shard models
+# Pre-compute indices for phi
+phi_indices <- lapply(phis, function(phi) {
+  list(
+    top_n_all = floor(length(val.true.tau) * phi),
+    top_n_shard = floor(length(val.true.tau) * phi)
+  )
+})
+
+# Main computation loop
+for (b in 1:B) {
+  # RMSE calculations
+  rmse.summary[b, ] <- c(
+    mean((val.pred.all[, b] - val.true.tau)^2),  # Full model
+    mean((val.pred.shard[, b] - val.true.tau)^2)  # Shard models
+  )
   
-  # Compute AUTOC
-  autoc.summary[b, 1] <- rank_average_treatment_effect.fit(val.true.tau, val.pred.all[, b], R = 3)$estimate
-  autoc.summary[b, 2] <- rank_average_treatment_effect.fit(val.true.tau, val.pred.shard[, b], R = 3)$estimate
+  # AUTOC calculations
+  autoc.summary[b, ] <- c(
+    rank_average_treatment_effect.fit(val.true.tau, val.pred.all[, b], R = 3)$estimate,
+    rank_average_treatment_effect.fit(val.true.tau, val.pred.shard[, b], R = 3)$estimate
+  )
   
-  # Compute profits for each phi
+  # Profit calculations for each phi
   for (phi_idx in seq_along(phis)) {
     phi <- phis[phi_idx]
-    top_n_all <- floor(length(val.pred.all[, b]) * phi)  # Number of top observations for full model
-    top_n_shard <- floor(length(val.pred.shard[, b]) * phi)  # Number for shard models
+    indices <- phi_indices[[phi_idx]]
     
-    # Store profit in corresponding location
-    profit.summary[b, 1, phi_idx] <- sum(val.true.tau[order(val.pred.all[, b], decreasing = TRUE)[1:top_n_all]])
-    profit.summary[b, 2, phi_idx] <- sum(val.true.tau[order(val.pred.shard[, b], decreasing = TRUE)[1:top_n_shard]])
+    profit.summary[b, 1, phi_idx] <- sum(
+      val.true.tau[order(val.pred.all[, b], decreasing = TRUE)[1:indices$top_n_all]]
+    )
+    profit.summary[b, 2, phi_idx] <- sum(
+      val.true.tau[order(val.pred.shard[, b], decreasing = TRUE)[1:indices$top_n_shard]]
+    )
   }
 }
 
-# Summarize results
-data.frame(
-  RMSE = paste0(round(colMeans(rmse.summary), 2), " (", round(colSds(rmse.summary), 2), ")"),
-  AUTOC = paste0(round(colMeans(autoc.summary), 2), " (", round(colSds(autoc.summary), 2), ")")
+# Summarize RMSE and AUTOC results
+rmse_summary_df <- data.frame(
+  Model = c("Full", "Shard"),
+  Mean = colMeans(rmse.summary),
+  SD = apply(rmse.summary, 2, sd)
 )
 
-# Compute average and standard deviation of computation time
-colMeans(time.spent)
-colSds(time.spent)
-
-# Summarize profit for each phi
-profit.mean <- apply(profit.summary, c(2, 3), mean)  # Mean profit [2 x phis]
-profit.sd <- apply(profit.summary, c(2, 3), sd)      # Std dev profit [2 x phis]
-
-# Create a summary data frame
-profit_summary <- data.frame(
-  Phi = rep(phis, each = 2),  # Repeat phi values for full and shard models
-  Model = rep(c("Full", "Shard"), times = length(phis)),  # Model type
-  Mean = as.vector(profit.mean),  # Mean profits
-  SD = as.vector(profit.sd)       # Standard deviations
+autoc_summary_df <- data.frame(
+  Model = c("Full", "Shard"),
+  Mean = colMeans(autoc.summary),
+  SD = apply(autoc.summary, 2, sd)
 )
 
-# Convert the 3D array into a tidy data frame for detailed analysis
-profit_df <- data.frame()
+# Summarize Profit results
+profit_summary_df <- expand.grid(
+  Phi = phis,
+  Model = c("Full", "Shard")
+) %>%
+  mutate(
+    Mean = as.vector(apply(profit.summary, c(2, 3), mean)),
+    SD = as.vector(apply(profit.summary, c(2, 3), sd))
+  )
 
-for (phi_idx in seq_along(phis)) {
-  for (b in 1:B) {
-    profit_df <- rbind(profit_df, data.frame(
-      Bootstrap = b,
-      Phi = phis[phi_idx],
-      Full_Profit = profit.summary[b, 1, phi_idx],
-      Shard_Profit = profit.summary[b, 2, phi_idx]
-    ))
-  }
-}
-
-profit_df %>%
+# Tidy profit details for further analysis
+profit_df <- expand.grid(
+  Bootstrap = 1:B,
+  Phi = phis
+) %>%
+  rowwise() %>%
+  mutate(
+    Full_Profit = profit.summary[Bootstrap, 1, which(phis == Phi)],
+    Shard_Profit = profit.summary[Bootstrap, 2, which(phis == Phi)]
+  ) %>%
   group_by(Phi) %>%
-  summarize(mean_full_profit = mean(Full_Profit),
-            mean_shard_profit = mean(Shard_Profit),
-            difference = mean_full_profit - mean_shard_profit)
+  summarize(
+    Mean_Full_Profit = mean(Full_Profit),
+    Mean_Shard_Profit = mean(Shard_Profit),
+    Profit_Difference = Mean_Full_Profit - Mean_Shard_Profit,
+    .groups = 'drop'
+  )
 
-
+# Output results
+list(
+  RMSE = rmse_summary_df,
+  AUTOC = autoc_summary_df,
+  Profit_Details = profit_df,
+  Time = data.frame(model = c("Full model", "Shard model"), time = colMeans(time.spent), sd_time= colSds(time.spent))
+)

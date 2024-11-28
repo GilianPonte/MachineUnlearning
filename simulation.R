@@ -91,25 +91,14 @@ customers_to_unlearn = 1 # specifies how many customers should be unlearned
 unlearning_index = sample(1:train.n.sample, customers_to_unlearn) # samples a customers to be unlearned
 
 # Generate validation data for control and treatment
-val.control.data <- gen_test(val.n.sample)
-val.control.X <- as.matrix(val.control.data[[3]])  # Covariates
-val.control.tau <- val.control.data[[4]]           # True treatment effect
-val.control.Y <- val.control.data[[2]]             # Observed outcomes (control)
-
-val.treatment.data <- gen_test(val.n.sample)
-val.treatment.X <- as.matrix(val.treatment.data[[3]])  # Covariates
-val.treatment.tau <- val.treatment.data[[4]]           # True treatment effect
-val.treatment.Y <- val.treatment.data[[1]]             # Observed outcomes (treatment)
-
-# Combine control and treatment data for validation
-val.Y <- c(val.control.Y, val.treatment.Y)             # Combined outcomes
-val.W <- c(rep(0, val.n.sample), rep(1, val.n.sample)) # Treatment indicator
-val.X <- rbind(val.control.X, val.treatment.X)         # Combined covariates
-val.true.tau <- c(val.control.tau, val.treatment.tau)  # Combined true treatment effect
+val <- gen_test(val.n.sample,
+                variables = 5,
+                complexity = "uniform",
+                confounding = FALSE)
 
 # Initialize matrices to store predictions and computation time
-val.pred.all <- matrix(0, nrow = length(val.Y), ncol = B)
-val.pred.shard <- matrix(0, nrow = length(val.Y), ncol = B)
+val.pred.all <- matrix(0, nrow = length(val$y), ncol = B)
+val.pred.shard <- matrix(0, nrow = length(val$y), ncol = B)
 time.spent <- matrix(0, nrow = B, ncol = 2)
 
 # Define shard counts to test
@@ -129,46 +118,35 @@ for (shards in shard_counts) {
     print(paste0("running bootstrap:", b))
   
     # Generate training data for control and treatment
-    train.control.data <- gen_test(train.n.sample)
-    train.control.X <- as.matrix(train.control.data[[3]])
-    train.control.tau <- train.control.data[[4]]
-    train.control.Y <- train.control.data[[2]]
-  
-    train.treatment.data <- gen_test(train.n.sample)
-    train.treatment.X <- as.matrix(train.treatment.data[[3]])
-    train.treatment.tau <- train.treatment.data[[4]]
-    train.treatment.Y <- train.treatment.data[[1]]
-  
-    # Combine training data
-    train.Y <- c(train.control.Y, train.treatment.Y)
-    train.W <- c(rep(0, train.n.sample), rep(1, train.n.sample))
-    train.X <- rbind(train.control.X, train.treatment.X)
-    train.true.tau <- c(train.control.tau, train.treatment.tau)
+    train <- gen_test(train.n.sample,
+                    variables = 5,
+                    complexity = "uniform",
+                    confounding = FALSE)
   
     # Split data into "shards" shards
-    shard.id <- split(1:length(train.Y), cut(sample(1:length(train.Y)), breaks = shards, labels = FALSE))
+    shard.id <- split(1:length(train$y), cut(sample(1:length(train$y)), breaks = shards, labels = FALSE))
     which_shard_needs_retraining <- which_list(unlearning_index, shard.id)
   
     # Train causal forest on the entire dataset
     start.time <- Sys.time()
-    mod.all <- causal_forest(X = train.X, W = train.W, Y = train.Y, num.trees = 2000)  # Fit causal forest model
-    val.pred.all[, b] <- predict(mod.all, val.X)[[1]]  # Predict treatment effects
+    mod.all <- causal_forest(X = train$x, W = train$w, Y = train$y, num.trees = 2000)  # Fit causal forest model
+    val.pred.all[, b] <- predict(mod.all, val$x)[[1]]  # Predict treatment effects
     end.time <- Sys.time()
     time.spent[b, 1] <- end.time - start.time  # Record computation time
   
     # Train causal forest on each shard and aggregate predictions
-    pred.shard.matrix <- matrix(0, nrow = length(val.Y), ncol = shards)
+    pred.shard.matrix <- matrix(0, nrow = length(val$y), ncol = shards)
     for(s in 1:shards) {
       print(paste0("working on shard #",s))
       if(which_shard_needs_retraining == s){
         start.time <- Sys.time()
-        mod.shard <- causal_forest(X = train.X[shard.id[[s]], ], W = train.W[shard.id[[s]]], Y = train.Y[shard.id[[s]]])
+        mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]])
         end.time <- Sys.time()
         time.spent[b, 2] <- end.time - start.time  # Record computation time
       } else{
-        mod.shard <- causal_forest(X = train.X[shard.id[[s]], ], W = train.W[shard.id[[s]]], Y = train.Y[shard.id[[s]]]) 
+        mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]]) 
       }
-      pred.shard.matrix[, s] <- predict(mod.shard, val.X)[[1]]
+      pred.shard.matrix[, s] <- predict(mod.shard, val$x)[[1]]
     }
     val.pred.shard[, b] <- rowMeans(pred.shard.matrix)  # Average shard predictions
     print(time.spent[b, ])
@@ -178,16 +156,16 @@ for (shards in shard_counts) {
   rmse.summary <- data.frame(
     Model = c("Full", "Shard"),
     RMSE = c(
-      mean((val.pred.all - val.true.tau)^2),
-      mean((val.pred.shard - val.true.tau)^2)
+      mean((val.pred.all - val$tau)^2),
+      mean((val.pred.shard - val$tau)^2)
     )
   )
   
   autoc.summary <- data.frame(
     Model = c("Full", "Shard"),
     AUTOC = c(
-      cor(val.pred.all, val.true.tau),
-      cor(val.pred.shard, val.true.tau)
+      cor(val.pred.all, val$tau),
+      cor(val.pred.shard, val$tau)
     )
   )
   
@@ -195,10 +173,10 @@ for (shards in shard_counts) {
     Phi = rep(phis, each = 2),
     Model = rep(c("Full", "Shard"), times = length(phis)),
     Profit = unlist(lapply(phis, function(phi) {
-      top_n <- floor(length(val.true.tau) * phi)
+      top_n <- floor(length(val$tau) * phi)
       c(
-        sum(val.true.tau[order(val.pred.all, decreasing = TRUE)[1:top_n]]),
-        sum(val.true.tau[order(val.pred.shard, decreasing = TRUE)[1:top_n]])
+        sum(val$tau[order(val.pred.all, decreasing = TRUE)[1:top_n]]),
+        sum(val$tau[order(val.pred.shard, decreasing = TRUE)[1:top_n]])
       )
     }))
   )

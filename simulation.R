@@ -12,43 +12,65 @@ require(caret)        # Tools for cross-validation and data splitting
 library(matrixStats)
 
 # Function to generate synthetic data for training and evaluation
-gen_test <- function(n.sample, complexity = "uniform") {
+gen_test <- function(n.sample, 
+                     variables = 5, 
+                     complexity = c("uniform", "normal", "cauchy", "mixed"),
+                     confounding = FALSE) {
   
-  if (complexity == "uniform"){
-    # Simulate covariates as independent uniform random variables
-    X1 <- runif(n.sample, 0, 5)
-    X2 <- runif(n.sample, 0, 5)
-    X3 <- runif(n.sample, 0, 5)
-    X4 <- runif(n.sample, 0, 5)
-    X5 <- runif(n.sample, 0, 5)
-    X6 <- runif(n.sample, 0, 5)
-  } else if(complexity == "normal"){
-    X1 <- rnorm(n.sample, 0, 1)
-    X2 <- rnorm(n.sample, 0, 1)
-    X3 <- rnorm(n.sample, 0, 1)
-    X4 <- rnorm(n.sample, 0, 1)
-    X5 <- rnorm(n.sample, 0, 1)
-    X6 <- rnorm(n.sample, 0, 1)
+  if (variables < 5){
+    print("Error: variables should be bigger than 5")
+    stop()
+  }
+  # Initialize an empty list to store generated variables
+  data <- list()
+  
+  # Check complexity and generate variables accordingly
+  if (complexity == "normal") {
+    # Generate variables with normal distribution
+    for (i in 1:variables) {
+      data[[paste0("X", i)]] <- rnorm(n.sample, 0, 1)
+    }
+  } else if (complexity == "uniform") {
+    # Generate variables with uniform distribution
+    for (i in 1:variables) {
+      data[[paste0("X", i)]] <- runif(n.sample, 0, 5)
+    }
+  } else if (complexity == "cauchy") {
+    # Generate variables with Cauchy distribution
+    for (i in 1:variables) {
+      data[[paste0("X", i)]] <- rcauchy(n.sample)
+    }
+  } else if (complexity == "mixed") {
+    # Generate variables with a mix of Normal, Binomial, and Cauchy distributions
+    for (i in 1:variables) {
+      if (i %% 3 == 1) { # Normal distribution
+        data[[paste0("X", i)]] <- rnorm(n.sample, 0, 1)
+      } else if (i %% 3 == 2) { # Binomial distribution
+        data[[paste0("X", i)]] <- rbinom(n.sample, size = 10, prob = 0.5)
+      } else { # Cauchy distribution
+        data[[paste0("X", i)]] <- rcauchy(n.sample)
+      }
+    }
+  } else {
+    stop("Unknown complexity type. Use 'normal', 'uniform', 'cauchy', or 'mixed'.")
   }
   
+  # Combine covariates into a data frame
+  x <- as.data.frame(data)
+
+  if (confounding == TRUE){
+    p = 1/(1 + exp(x[,2] + x[,3]))
+  } else{
+    p = 0.5 
+  }
+  w = as.numeric(rbinom(n.sample,1,p)==1)
+  m = pmax(0, x[,1] + x[,2], x[,3]) + pmax(0, x[,4] + x[,5])
+  tau = x[,1] + log(1 + exp(x[,2]))^2
+  mu1 = m + tau/2
+  mu0 = m - tau/2
+  y = w*mu1 + (1-w) * mu0 + 0.5*rnorm(n.sample)
   
-  covariate <- data.frame(X1, X2, X3, X4, X5, X6)  # Combine covariates into a data frame
-  
-  # Compute expected outcomes under control and treatment
-  exp.Y.control <- sin(pi * X1 * X2) - 2 * (X1 - X3 - 0.5)^2 + X2 * X4 -
-    (2 * X1 - X2 + 0.5 * X3^2 - X4 - log(X1) * (X4 - 1.5)) / 2
-  exp.Y.treatment <- sin(pi * X1 * X2) - 2 * (X1 - X3 - 0.5)^2 + X2 * X4 + 
-    (2 * X1 - X2 + 0.5 * X3^2 - X4 - log(X1) * (X4 - 1.5)) / 2
-  
-  true.tau <- exp.Y.treatment - exp.Y.control  # Compute true treatment effect
-  
-  noise <- rnorm(n.sample, 0, 1)  # Add Gaussian noise to the outcomes
-  
-  # Generate noisy outcomes under control and treatment
-  Y.treatment <- exp.Y.treatment + noise
-  Y.control <- exp.Y.control + noise
-  
-  return(list(Y.treatment, Y.control, covariate, true.tau, exp.Y.treatment, exp.Y.control))
+  return(list(x=x, w=w, y=y, p=p, m=m, mu0=mu0, mu1=mu1, tau=tau))
 }
 
 # Assuming 'my_list' is your list structure

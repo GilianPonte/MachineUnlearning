@@ -18,10 +18,10 @@ try(setwd("C:/Users/Gilia/Dropbox/RSM/projects/Machine Unlearning & CATE estimat
 source("utils.R")
 
 # Number of bootstrap samples
-B <- 10
+B <- 2
 
 # Training and validation sample sizes
-n = 100
+n = 1000
 train.n.sample <- n
 val.n.sample <- n
 
@@ -72,7 +72,7 @@ for (shards in shard_counts) {
     mod.all <- causal_forest(X = train$x, W = train$w, Y = train$y, num.trees = 2000)  # Fit causal forest model
     val.pred.all[, b] <- predict(mod.all, val$x)[[1]]  # Predict treatment effects
     end.time <- Sys.time()
-    time.spent[b, 1] <- end.time - start.time  # Record computation time
+    time.spent[b, 1] <- as.numeric(difftime(end.time, start.time, units = "secs"))  # Record computation time
   
     # Train causal forest on each shard and aggregate predictions
     pred.shard.matrix <- matrix(0, nrow = length(val$y), ncol = shards)
@@ -82,7 +82,7 @@ for (shards in shard_counts) {
         start.time <- Sys.time()
         mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]])
         end.time <- Sys.time()
-        time.spent[b, 2] <- end.time - start.time  # Record computation time
+        time.spent[b, 2] <- as.numeric(difftime(end.time, start.time, units = "secs"))
       } else{
         mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]]) 
       }
@@ -138,7 +138,7 @@ print(profit_results)
 
 
 
-# Display the cleaned results
+# profit plot
 profit_results %>%
   group_by(shard, Phi, Model) %>%
   summarize(mean_profit = mean(Profit), .groups = "drop") %>%
@@ -148,8 +148,8 @@ profit_results %>%
   geom_line(size = 1) + # Thicker line for better visibility
   geom_point(size = 1) +  # Add points to emphasize data
   labs(
-    x = "Phi",
-    y = "Profit Difference",
+    x = "Phi (log scale)",
+    y = "Profit difference (Full - Shard)",
     color = "Shards"
   ) +
   theme_minimal(base_size = 12) + # Clean and modern theme
@@ -158,8 +158,19 @@ profit_results %>%
     plot.title = element_text(size = 12), # Bold title
     plot.subtitle = element_text(size = 12), # Add emphasis to subtitle
     axis.title = element_text(size = 12)
-  )
+  ) +
+  scale_x_log10()
 
-
+# performance plot
 perf_results %>% 
-  group_by(shard, Phi, Model) %>%
+  group_by(shard, Model) %>%
+  pivot_longer(c(RMSE, AUTOC, Time)) %>%
+  ggplot(aes(x = Model, y = value, color = name)) +
+  facet_grid(name~shard, scales = "free_y") +
+  geom_boxplot() +
+  theme_bw() +
+  labs(
+    x = "Model and # shards",
+    y = "",
+    color = "Metric"
+  )

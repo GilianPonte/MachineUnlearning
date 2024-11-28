@@ -12,14 +12,25 @@ require(caret)        # Tools for cross-validation and data splitting
 library(matrixStats)
 
 # Function to generate synthetic data for training and evaluation
-gen_test <- function(n.sample) {
-  # Simulate covariates as independent uniform random variables
-  X1 <- runif(n.sample, 0, 5)
-  X2 <- runif(n.sample, 0, 5)
-  X3 <- runif(n.sample, 0, 5)
-  X4 <- runif(n.sample, 0, 5)
-  X5 <- runif(n.sample, 0, 5)
-  X6 <- runif(n.sample, 0, 5)
+gen_test <- function(n.sample, complexity = "uniform") {
+  
+  if (complexity == "uniform"){
+    # Simulate covariates as independent uniform random variables
+    X1 <- runif(n.sample, 0, 5)
+    X2 <- runif(n.sample, 0, 5)
+    X3 <- runif(n.sample, 0, 5)
+    X4 <- runif(n.sample, 0, 5)
+    X5 <- runif(n.sample, 0, 5)
+    X6 <- runif(n.sample, 0, 5)
+  } else if(complexity == "normal"){
+    X1 <- rnorm(n.sample, 0, 1)
+    X2 <- rnorm(n.sample, 0, 1)
+    X3 <- rnorm(n.sample, 0, 1)
+    X4 <- rnorm(n.sample, 0, 1)
+    X5 <- rnorm(n.sample, 0, 1)
+    X6 <- rnorm(n.sample, 0, 1)
+  }
+  
   
   covariate <- data.frame(X1, X2, X3, X4, X5, X6)  # Combine covariates into a data frame
   
@@ -49,7 +60,7 @@ which_list <- function(value, list_data) {
 B <- 1
 
 # Training and validation sample sizes
-n = 10000
+n = 1000
 train.n.sample <- n
 val.n.sample <- n
 

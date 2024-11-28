@@ -11,78 +11,17 @@ library(xgboost)      # Gradient Boosting framework
 require(caret)        # Tools for cross-validation and data splitting
 library(matrixStats)
 
-# Function to generate synthetic data for training and evaluation
-gen_test <- function(n.sample, 
-                     variables = 5, 
-                     complexity = c("uniform", "normal", "cauchy", "mixed"),
-                     confounding = FALSE) {
-  
-  if (variables < 5){
-    print("Error: variables should be bigger than 5")
-    stop()
-  }
-  # Initialize an empty list to store generated variables
-  data <- list()
-  
-  # Check complexity and generate variables accordingly
-  if (complexity == "normal") {
-    # Generate variables with normal distribution
-    for (i in 1:variables) {
-      data[[paste0("X", i)]] <- rnorm(n.sample, 0, 1)
-    }
-  } else if (complexity == "uniform") {
-    # Generate variables with uniform distribution
-    for (i in 1:variables) {
-      data[[paste0("X", i)]] <- runif(n.sample, 0, 5)
-    }
-  } else if (complexity == "cauchy") {
-    # Generate variables with Cauchy distribution
-    for (i in 1:variables) {
-      data[[paste0("X", i)]] <- rcauchy(n.sample)
-    }
-  } else if (complexity == "mixed") {
-    # Generate variables with a mix of Normal, Binomial, and Cauchy distributions
-    for (i in 1:variables) {
-      if (i %% 3 == 1) { # Normal distribution
-        data[[paste0("X", i)]] <- rnorm(n.sample, 0, 1)
-      } else if (i %% 3 == 2) { # Binomial distribution
-        data[[paste0("X", i)]] <- rbinom(n.sample, size = 10, prob = 0.5)
-      } else { # Cauchy distribution
-        data[[paste0("X", i)]] <- rcauchy(n.sample)
-      }
-    }
-  } else {
-    stop("Unknown complexity type. Use 'normal', 'uniform', 'cauchy', or 'mixed'.")
-  }
-  
-  # Combine covariates into a data frame
-  x <- as.data.frame(data)
-
-  if (confounding == TRUE){
-    p = 1/(1 + exp(x[,2] + x[,3]))
-  } else{
-    p = 0.5 
-  }
-  w = as.numeric(rbinom(n.sample,1,p)==1)
-  m = pmax(0, x[,1] + x[,2], x[,3]) + pmax(0, x[,4] + x[,5])
-  tau = x[,1] + log(1 + exp(x[,2]))^2
-  mu1 = m + tau/2
-  mu0 = m - tau/2
-  y = w*mu1 + (1-w) * mu0 + 0.5*rnorm(n.sample)
-  
-  return(list(x=x, w=w, y=y, p=p, m=m, mu0=mu0, mu1=mu1, tau=tau))
-}
-
-# Assuming 'my_list' is your list structure
-which_list <- function(value, list_data) {
-  return(names(list_data)[sapply(list_data, function(x) value %in% x)])
-}
+# davids wd
+try(setwd(""))
+# gilian wd
+try(setwd("C:/Users/Gilia/Dropbox/RSM/projects/Machine Unlearning & CATE estimation/MachineUnlearning"))
+source("utils.R")
 
 # Number of bootstrap samples
-B <- 2
+B <- 10
 
 # Training and validation sample sizes
-n = 1000
+n = 100
 train.n.sample <- n
 val.n.sample <- n
 
@@ -200,11 +139,27 @@ print(profit_results)
 
 
 # Display the cleaned results
-profit = cleaned_results$Profit 
-profit %>%
-  ggplot(aes(x = Phi, y = Profit, color = as.factor(Model), group = as.factor(Model))) + 
-  geom_line() + 
-  theme_bw() +
-  facet_wrap(~Shards)
+profit_results %>%
+  group_by(shard, Phi, Model) %>%
+  summarize(mean_profit = mean(Profit), .groups = "drop") %>%
+  pivot_wider(names_from = Model, values_from = mean_profit) %>%
+  mutate(profit_difference = Full - Shard) %>%
+  ggplot(aes(x = Phi, y = profit_difference, color = as.factor(shard))) + 
+  geom_line(size = 1) + # Thicker line for better visibility
+  geom_point(size = 1) +  # Add points to emphasize data
+  labs(
+    x = "Phi",
+    y = "Profit Difference",
+    color = "Shards"
+  ) +
+  theme_minimal(base_size = 12) + # Clean and modern theme
+  theme(
+    legend.position = "top", # Move legend to top for clarity
+    plot.title = element_text(size = 12), # Bold title
+    plot.subtitle = element_text(size = 12), # Add emphasis to subtitle
+    axis.title = element_text(size = 12)
+  )
 
 
+perf_results %>% 
+  group_by(shard, Phi, Model) %>%

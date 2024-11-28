@@ -79,7 +79,7 @@ which_list <- function(value, list_data) {
 }
 
 # Number of bootstrap samples
-B <- 1
+B <- 2
 
 # Training and validation sample sizes
 n = 1000
@@ -108,7 +108,8 @@ shard_counts <- c(2, 5, 10)
 phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 # Initialize storage for results across shard counts
-results <- list()
+perf_results <- list()
+profit_results = list()
 
 for (shards in shard_counts) {
   cat(paste0("Testing with ", shards, " shards...\n"))
@@ -147,95 +148,56 @@ for (shards in shard_counts) {
         mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]]) 
       }
       pred.shard.matrix[, s] <- predict(mod.shard, val$x)[[1]]
-    }
+    } # shards loop stops here
     val.pred.shard[, b] <- rowMeans(pred.shard.matrix)  # Average shard predictions
     print(time.spent[b, ])
-  }
-  
-  # Compute RMSE, AUTOC, and profit
-  rmse.summary <- data.frame(
-    Model = c("Full", "Shard"),
-    RMSE = c(
-      mean((val.pred.all - val$tau)^2),
-      mean((val.pred.shard - val$tau)^2)
-    )
-  )
-  
-  autoc.summary <- data.frame(
-    Model = c("Full", "Shard"),
-    AUTOC = c(
-      cor(val.pred.all, val$tau),
-      cor(val.pred.shard, val$tau)
-    )
-  )
-  
-  profit.summary <- data.frame(
-    Phi = rep(phis, each = 2),
-    Model = rep(c("Full", "Shard"), times = length(phis)),
-    Profit = unlist(lapply(phis, function(phi) {
-      top_n <- floor(length(val$tau) * phi)
-      c(
-        sum(val$tau[order(val.pred.all, decreasing = TRUE)[1:top_n]]),
-        sum(val$tau[order(val.pred.shard, decreasing = TRUE)[1:top_n]])
+    
+    # Compute RMSE, AUTOC, and profit
+    perf <- data.frame(
+      shard = rep(s,2),
+      bootstrap = rep(b, 2), # Repeat `b` for each model type
+      Model = c("Full", "Shard"), # Two models: Full and Shard
+      RMSE = c(
+        mean((val.pred.all[, b] - val$tau)^2),
+        mean((val.pred.shard[, b] - val$tau)^2)
+      ),
+      AUTOC = c(
+        cor(val.pred.all[, b], val$tau),
+        cor(val.pred.shard[, b], val$tau)
+      ),
+      Time = c(
+        time.spent[b, 1], # Time for "Full" model
+        time.spent[b, 2]  # Time for "Shard" model
       )
-    }))
-  )
-  
-  time.summary <- data.frame(
-    Model = c("Full", "Shard"),
-    Mean_Time = colMeans(time.spent),
-    SD_Time = colSds(time.spent)
-  )
-  
-  # Store results
-  results[[as.character(shards)]] <- list(
-    RMSE = rmse.summary,
-    AUTOC = autoc.summary,
-    Profit = profit.summary,
-    Time = time.summary
-  )
-}
-# Assuming `results` contains the nested list structure as shown
-clean_results <- function(results) {
-  # Initialize empty data frames for combined results
-  final_rmse <- data.frame()
-  final_autoc <- data.frame()
-  final_profit <- data.frame()
-  final_time <- data.frame()
-  
-  # Loop over the shard levels
-  for (shards in names(results)) {
-    shard_results <- results[[shards]]
+    )
     
-    # Add shard count to each sub-result and combine into final data frames
-    rmse <- shard_results$RMSE %>%
-      mutate(Shards = as.numeric(shards))
-    final_rmse <- bind_rows(final_rmse, rmse)
+    # profit
+    profit = data.frame(
+      shard = rep(s,length(phis)),
+      bootstrap = rep(b, length(phis)), # Repeat `b` for each model type
+      Phi = rep(phis, each = 2),
+      Model = rep(c("Full", "Shard"), times = length(phis)),
+      Profit = unlist(lapply(phis, function(phi) {
+        top_n <- floor(length(val$tau) * phi)
+        c(
+          sum(val$tau[order(val.pred.all[,b], decreasing = TRUE)[1:top_n]]),
+          sum(val$tau[order(val.pred.shard[,b], decreasing = TRUE)[1:top_n]])
+        )
+      }))
+    )
     
-    autoc <- shard_results$AUTOC %>%
-      mutate(Shards = as.numeric(shards))
-    final_autoc <- bind_rows(final_autoc, autoc)
+    perf_results = rbind(perf_results, perf)
     
-    profit <- shard_results$Profit %>%
-      mutate(Shards = as.numeric(shards))
-    final_profit <- bind_rows(final_profit, profit)
+    profit_results = rbind(profit_results, profit)
     
-    time <- shard_results$Time %>%
-      mutate(Shards = as.numeric(shards))
-    final_time <- bind_rows(final_time, time)
-  }
-  
-  # Return a list of cleaned data frames
-  list(
-    RMSE = final_rmse,
-    AUTOC = final_autoc,
-    Profit = final_profit,
-    Time = final_time
-  )
+    
+  } # bootstrap loop finishes here
 }
 
-# Apply the function to clean the results
-cleaned_results <- clean_results(results)
+print(perf_results)
+print(profit_results)
+
+
 
 # Display the cleaned results
 profit = cleaned_results$Profit 

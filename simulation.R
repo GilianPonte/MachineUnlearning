@@ -26,121 +26,134 @@ B <- 10 # uncertainty
 variables = 6 # dim of X
 complexity = "uniform" # complexity X
 confounding = FALSE # confounding
-n = 1000 # samples
-train.n.sample <- n
-val.n.sample <- n
+sample_sizes <- c(100, 1000, 2000) # Example sizes
+
 
 # unlearning settings
 shard_counts <- c(2, 5, 10) # shards
 
-# Generate validation data for control and treatment
-val <- gen_test(val.n.sample,
-                variables = variables,
-                complexity = complexity,
-                confounding = FALSE)
-
-# Initialize matrices to store predictions and computation time
-val.pred.all <- matrix(0, nrow = length(val$y), ncol = B)
-val.pred.shard <- matrix(0, nrow = length(val$y), ncol = B)
-time.spent <- matrix(0, nrow = B, ncol = 2)
-
-# Initialize storage for results across shard counts
-perf_results <- list()
-profit_results = list()
 phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9) # phis for profit
 
-for (shards in shard_counts) {
-  cat(paste0("Testing with ", shards, " shards...\n"))
+# Initialize storage for results across all sample sizes
+all_perf_results <- list()
+all_profit_results <- list()
+
+# Loop over sample sizes
+for (n in sample_sizes) {
+  cat(paste0("Running with sample size: ", n, "...\n"))
   
-  # Bootstrap sampling loop
-  for(b in 1:B) {
-    print(paste0("running bootstrap:", b))
+  train.n.sample <- n
+  val.n.sample <- n
   
-    # Generate training data for control and treatment
-    train <- gen_test(train.n.sample,
-                    variables = variables,
-                    complexity = "uniform",
-                    confounding = FALSE)
+  # Generate validation data for control and treatment
+  val <- gen_test(val.n.sample,
+                  variables = variables,
+                  complexity = complexity,
+                  confounding = FALSE)
   
-    # unlearn individual's index
-    customers_to_unlearn = 1 # specifies how many customers should be unlearned
-    unlearning_index = sample(1:train.n.sample, customers_to_unlearn) # samples a customers to be unlearned
-    # we can also make the unlearning_index a function of whether we have treated them before. 
-    #unlearning_index = sample(which(train$w== 1), customers_to_unlearn)
+  # Initialize matrices to store predictions and computation time
+  val.pred.all <- matrix(0, nrow = length(val$y), ncol = B)
+  val.pred.shard <- matrix(0, nrow = length(val$y), ncol = B)
+  time.spent <- matrix(0, nrow = B, ncol = 2)
+  
+  # Initialize storage for results across shard counts
+  perf_results <- list()
+  profit_results <- list()
+  
+  for (shards in shard_counts) {
+    cat(paste0("Testing with ", shards, " shards...\n"))
     
-    # Split data into "shards" shards
-    shard.id <- split(1:length(train$y), cut(sample(1:length(train$y)), breaks = shards, labels = FALSE))
-    which_shard_needs_retraining <- which_list(unlearning_index, shard.id)
-  
-    # Train causal forest on the entire dataset
-    start.time <- Sys.time()
-    mod.all <- causal_forest(X = train$x, W = train$w, Y = train$y, num.trees = 2000)  # Fit causal forest model
-    val.pred.all[, b] <- predict(mod.all, val$x)[[1]]  # Predict treatment effects
-    end.time <- Sys.time()
-    time.spent[b, 1] <- as.numeric(difftime(end.time, start.time, units = "secs"))  # Record computation time
-  
-    # Train causal forest on each shard and aggregate predictions
-    pred.shard.matrix <- matrix(0, nrow = length(val$y), ncol = shards)
-    for(s in 1:shards) {
-      print(paste0("working on shard #",s))
-      if(which_shard_needs_retraining == s){
-        start.time <- Sys.time()
-        mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]])
-        end.time <- Sys.time()
-        time.spent[b, 2] <- as.numeric(difftime(end.time, start.time, units = "secs"))
-      } else{
-        mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]]) 
+    for (b in 1:B) {
+      #print(paste0("Running bootstrap: ", b))
+      
+      # Generate training data for control and treatment
+      train <- gen_test(train.n.sample,
+                        variables = variables,
+                        complexity = "uniform",
+                        confounding = FALSE)
+      
+      # Unlearn individual's index
+      customers_to_unlearn <- 1
+      unlearning_index <- sample(1:train.n.sample, customers_to_unlearn)
+      
+      # Split data into "shards" shards
+      shard.id <- split(1:length(train$y), cut(sample(1:length(train$y)), breaks = shards, labels = FALSE))
+      which_shard_needs_retraining <- which_list(unlearning_index, shard.id)
+      
+      # Train causal forest on the entire dataset
+      start.time <- Sys.time()
+      mod.all <- causal_forest(X = train$x, W = train$w, Y = train$y, num.trees = 2000)
+      val.pred.all[, b] <- predict(mod.all, val$x)[[1]]
+      end.time <- Sys.time()
+      time.spent[b, 1] <- as.numeric(difftime(end.time, start.time, units = "secs"))
+      
+      # Train causal forest on each shard and aggregate predictions
+      pred.shard.matrix <- matrix(0, nrow = length(val$y), ncol = shards)
+      for (s in 1:shards) {
+        if (which_shard_needs_retraining == s) {
+          start.time <- Sys.time()
+          mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]])
+          end.time <- Sys.time()
+          time.spent[b, 2] <- as.numeric(difftime(end.time, start.time, units = "secs"))
+        } else {
+          mod.shard <- causal_forest(X = train$x[shard.id[[s]], ], W = train$w[shard.id[[s]]], Y = train$y[shard.id[[s]]])
+        }
+        pred.shard.matrix[, s] <- predict(mod.shard, val$x)[[1]]
       }
-      pred.shard.matrix[, s] <- predict(mod.shard, val$x)[[1]]
-    } # shards loop stops here
-    val.pred.shard[, b] <- rowMeans(pred.shard.matrix)  # Average shard predictions
-    print(time.spent[b, ])
-    
-    # Compute RMSE, AUTOC, and profit
-    perf <- data.frame(
-      shard = rep(s,2),
-      bootstrap = rep(b, 2), # Repeat `b` for each model type
-      Model = c("Full", "Shard"), # Two models: Full and Shard
-      RMSE = c(
-        mean((val.pred.all[, b] - val$tau)^2),
-        mean((val.pred.shard[, b] - val$tau)^2)
-      ),
-      AUTOC = c(
-        cor(val.pred.all[, b], val$tau),
-        cor(val.pred.shard[, b], val$tau)
-      ),
-      Time = c(
-        time.spent[b, 1], # Time for "Full" model
-        time.spent[b, 2]  # Time for "Shard" model
+      val.pred.shard[, b] <- rowMeans(pred.shard.matrix)
+      print(time.spent[b, ])
+      
+      # Compute RMSE, AUTOC, and profit (same as in your original code)
+      perf <- data.frame(
+        shard = rep(s, 2),
+        bootstrap = rep(b, 2),
+        Model = c("Full", "Shard"),
+        RMSE = c(
+          mean((val.pred.all[, b] - val$tau)^2),
+          mean((val.pred.shard[, b] - val$tau)^2)
+        ),
+        AUTOC = c(
+          cor(val.pred.all[, b], val$tau),
+          cor(val.pred.shard[, b], val$tau)
+        ),
+        Time = c(
+          time.spent[b, 1],
+          time.spent[b, 2]
+        ),
+        SampleSize = rep(n, 2) # Add sample size
       )
-    )
-    
-    # profit
-    profit = data.frame(
-      shard = rep(s,length(phis)),
-      bootstrap = rep(b, length(phis)), # Repeat `b` for each model type
-      Phi = rep(phis, each = 2),
-      Model = rep(c("Full", "Shard"), times = length(phis)),
-      Profit = unlist(lapply(phis, function(phi) {
-        top_n <- floor(length(val$tau) * phi)
-        c(
-          sum(val$tau[order(val.pred.all[,b], decreasing = TRUE)[1:top_n]]),
-          sum(val$tau[order(val.pred.shard[,b], decreasing = TRUE)[1:top_n]])
-        )
-      }))
-    )
-    
-    perf_results = rbind(perf_results, perf)
-    
-    profit_results = rbind(profit_results, profit)
-    
-    
-  } # bootstrap loop finishes here
+      
+      profit <- data.frame(
+        shard = rep(s, length(phis)),
+        bootstrap = rep(b, length(phis)),
+        Phi = rep(phis, each = 2),
+        Model = rep(c("Full", "Shard"), times = length(phis)),
+        Profit = unlist(lapply(phis, function(phi) {
+          top_n <- floor(length(val$tau) * phi)
+          c(
+            sum(val$tau[order(val.pred.all[, b], decreasing = TRUE)[1:top_n]]),
+            sum(val$tau[order(val.pred.shard[, b], decreasing = TRUE)[1:top_n]])
+          )
+        })),
+        SampleSize = rep(n, length(phis) * 2) # Add sample size
+      )
+      
+      perf_results <- rbind(perf_results, perf)
+      profit_results <- rbind(profit_results, profit)
+    }
+  }
+  
+  # Append results to overall storage
+  all_perf_results[[as.character(n)]] <- perf_results
+  all_profit_results[[as.character(n)]] <- profit_results
+  
+  # Output performance and profit results for the current sample size
+  cat(paste0("Results for sample size: ", n, "\n"))
 }
 
-print(perf_results)
-print(profit_results)
-
+# Combine results across all sample sizes
+final_perf_results <- do.call(rbind, all_perf_results)
+final_profit_results <- do.call(rbind, all_profit_results)
 
 
 # profit plot

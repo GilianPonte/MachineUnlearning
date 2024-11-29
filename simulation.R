@@ -23,10 +23,10 @@ source("utils.R")
 
 # Number of bootstrap samples
 B <- 10 # uncertainty
-variables = 6 # dim of X
+variables = 6 # dim of X (min 6)
 complexity = "uniform" # complexity X
 confounding = FALSE # confounding
-sample_sizes <- c(100, 1000, 2000) # Example sizes
+sample_sizes <- c(1000, 1e4) # Example sizes
 
 
 # unlearning settings
@@ -157,14 +157,15 @@ final_profit_results <- do.call(rbind, all_profit_results)
 
 
 # profit plot
-profit_results %>%
-  group_by(shard, Phi, Model) %>%
+final_profit_results %>%
+  group_by(shard, Phi, Model, SampleSize) %>%
   summarize(mean_profit = mean(Profit), .groups = "drop") %>%
   pivot_wider(names_from = Model, values_from = mean_profit) %>%
   mutate(profit_difference = Full - Shard) %>%
   ggplot(aes(x = Phi, y = profit_difference, color = as.factor(shard))) + 
   geom_line(size = 1) + # Thicker line for better visibility
   geom_point(size = 1) +  # Add points to emphasize data
+  facet_wrap(~SampleSize) +
   labs(
     x = "Phi (log scale)",
     y = "Profit difference (Full - Shard)",
@@ -180,10 +181,10 @@ profit_results %>%
   scale_x_log10()
 
 # performance plot
-perf_results %>% 
+final_perf_results %>% 
   group_by(shard, Model) %>%
   pivot_longer(c(RMSE, AUTOC, Time)) %>%
-  ggplot(aes(x = Model, y = value, color = name)) +
+  ggplot(aes(x = interaction(Model, SampleSize), y = value, color = name)) +
   facet_grid(name~shard, scales = "free_y") +
   geom_boxplot() +
   theme_bw() +

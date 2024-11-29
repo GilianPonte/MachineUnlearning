@@ -17,22 +17,26 @@ try(setwd(""))
 try(setwd("C:/Users/Gilia/Dropbox/RSM/projects/Machine Unlearning & CATE estimation/MachineUnlearning"))
 source("utils.R")
 
-# Number of bootstrap samples
-B <- 2
 
-# Training and validation sample sizes
-n = 1000
+# GDPR info:
+# companies has a month to fulfill the request to be forgotten.
+
+# Number of bootstrap samples
+B <- 10 # uncertainty
+variables = 6 # dim of X
+complexity = "uniform" # complexity X
+confounding = FALSE # confounding
+n = 1000 # samples
 train.n.sample <- n
 val.n.sample <- n
 
-# unlearn individual's index
-customers_to_unlearn = 1 # specifies how many customers should be unlearned
-unlearning_index = sample(1:train.n.sample, customers_to_unlearn) # samples a customers to be unlearned
+# unlearning settings
+shard_counts <- c(2, 5, 10) # shards
 
 # Generate validation data for control and treatment
 val <- gen_test(val.n.sample,
-                variables = 5,
-                complexity = "uniform",
+                variables = variables,
+                complexity = complexity,
                 confounding = FALSE)
 
 # Initialize matrices to store predictions and computation time
@@ -40,15 +44,10 @@ val.pred.all <- matrix(0, nrow = length(val$y), ncol = B)
 val.pred.shard <- matrix(0, nrow = length(val$y), ncol = B)
 time.spent <- matrix(0, nrow = B, ncol = 2)
 
-# Define shard counts to test
-shard_counts <- c(2, 5, 10)
-
-# phis for profit
-phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
-
 # Initialize storage for results across shard counts
 perf_results <- list()
 profit_results = list()
+phis <- c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9) # phis for profit
 
 for (shards in shard_counts) {
   cat(paste0("Testing with ", shards, " shards...\n"))
@@ -59,10 +58,16 @@ for (shards in shard_counts) {
   
     # Generate training data for control and treatment
     train <- gen_test(train.n.sample,
-                    variables = 5,
+                    variables = variables,
                     complexity = "uniform",
                     confounding = FALSE)
   
+    # unlearn individual's index
+    customers_to_unlearn = 1 # specifies how many customers should be unlearned
+    unlearning_index = sample(1:train.n.sample, customers_to_unlearn) # samples a customers to be unlearned
+    # we can also make the unlearning_index a function of whether we have treated them before. 
+    #unlearning_index = sample(which(train$w== 1), customers_to_unlearn)
+    
     # Split data into "shards" shards
     shard.id <- split(1:length(train$y), cut(sample(1:length(train$y)), breaks = shards, labels = FALSE))
     which_shard_needs_retraining <- which_list(unlearning_index, shard.id)

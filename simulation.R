@@ -22,11 +22,11 @@ source("utils.R")
 # companies has a month to fulfill the request to be forgotten.
 
 # Number of bootstrap samples
-B <- 10 # uncertainty
+B <- 1 # uncertainty
 variables = 6 # dim of X (min 6)
 complexity = "uniform" # complexity X
 confounding = FALSE # confounding
-sample_sizes <- c(1000, 1e4) # Example sizes
+sample_sizes <- c(1e3, 1e4) # Example sizes
 
 
 # unlearning settings
@@ -146,9 +146,7 @@ for (n in sample_sizes) {
   # Append results to overall storage
   all_perf_results[[as.character(n)]] <- perf_results
   all_profit_results[[as.character(n)]] <- profit_results
-  
-  # Output performance and profit results for the current sample size
-  cat(paste0("Results for sample size: ", n, "\n"))
+
 }
 
 # Combine results across all sample sizes

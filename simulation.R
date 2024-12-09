@@ -23,9 +23,9 @@ source("utils.R")
 
 # Number of bootstrap samples
 B <- 10 # uncertainty
-variables = 6 # dim of X (min 6)
-complexity = "uniform" # complexity X
-confounding = FALSE # confounding
+variables = 12 # dim of X (min 6)
+complexity = "mixed" # complexity X
+confounding = TRUE # confounding
 sample_sizes <- c(1e3, 1e4) # Example sizes
 
 
@@ -70,7 +70,7 @@ for (n in sample_sizes) {
       train <- gen_test(train.n.sample,
                         variables = variables,
                         complexity = complexity,
-                        confounding = FALSE)
+                        confounding = confounding)
       
       # Unlearn individual's index
       customers_to_unlearn <- 1
@@ -153,8 +153,8 @@ for (n in sample_sizes) {
 final_perf_results <- do.call(rbind, all_perf_results)
 final_profit_results <- do.call(rbind, all_profit_results)
 
-#saveRDS(final_perf_results, "final_perf_results.RDS")
-#saveRDS(final_profit_results, "final_profit_results.RDS")
+saveRDS(final_perf_results, "final_perf_results_conf.RDS")
+saveRDS(final_profit_results, "final_profit_results_conf.RDS")
 
 # profit plot
 final_profit_results %>%

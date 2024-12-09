@@ -22,7 +22,7 @@ source("utils.R")
 # companies has a month to fulfill the request to be forgotten.
 
 # Number of bootstrap samples
-B <- 1 # uncertainty
+B <- 10 # uncertainty
 variables = 6 # dim of X (min 6)
 complexity = "uniform" # complexity X
 confounding = FALSE # confounding
@@ -69,7 +69,7 @@ for (n in sample_sizes) {
       # Generate training data for control and treatment
       train <- gen_test(train.n.sample,
                         variables = variables,
-                        complexity = "uniform",
+                        complexity = complexity,
                         confounding = FALSE)
       
       # Unlearn individual's index
@@ -153,6 +153,8 @@ for (n in sample_sizes) {
 final_perf_results <- do.call(rbind, all_perf_results)
 final_profit_results <- do.call(rbind, all_profit_results)
 
+#saveRDS(final_perf_results, "final_perf_results.RDS")
+#saveRDS(final_profit_results, "final_profit_results.RDS")
 
 # profit plot
 final_profit_results %>%
@@ -165,7 +167,7 @@ final_profit_results %>%
   geom_point(size = 1) +  # Add points to emphasize data
   facet_wrap(~SampleSize) +
   labs(
-    x = "Phi (log scale)",
+    x = "Phi",
     y = "Profit difference (Full - Shard)",
     color = "Shards"
   ) +
@@ -175,9 +177,8 @@ final_profit_results %>%
     plot.title = element_text(size = 12), # Bold title
     plot.subtitle = element_text(size = 12), # Add emphasis to subtitle
     axis.title = element_text(size = 12)
-  ) +
-  scale_x_log10()
-
+  ) 
+  
 # performance plot
 final_perf_results %>% 
   group_by(shard, Model) %>%
@@ -191,3 +192,11 @@ final_perf_results %>%
     y = "",
     color = "Metric"
   )
+
+as.data.frame(train) %>%
+  ggplot(aes(x = tau)) +
+  geom_density(fill = "grey", alpha = 0.5) +
+  geom_histogram(aes(y = ..density..), bins = 30, color = "black", fill = "grey", alpha = 0.3) +
+  xlab("tau") +
+  ylab("Density") +
+  theme_minimal()

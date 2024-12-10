@@ -1,6 +1,6 @@
 # Clear all objects in the R environment
 rm(list=ls())
-
+set.seed(1)
 # Load libraries for data manipulation, visualization, and causal inference
 library(tidyverse)    # Data manipulation and visualization
 library(hrbrthemes)   # ggplot2 themes

@@ -17,7 +17,6 @@ try(setwd(""))
 try(setwd("C:/Users/Gilia/Dropbox/RSM/projects/Machine Unlearning & CATE estimation/MachineUnlearning"))
 source("utils.R")
 
-
 # GDPR info:
 # companies has a month to fulfill the request to be forgotten.
 
@@ -26,8 +25,9 @@ B <- 10 # uncertainty
 variables = 12 # dim of X (min 6)
 complexity = "mixed" # complexity X
 confounding = TRUE # confounding
-sample_sizes <- c(1e3, 1e4) # Example sizes
-
+sample_sizes <- c(1e3,1e4) # Example sizes
+unlearning_decision = "target" # options are:
+# "random" deletes random obs, "target" deletes w == 1 obs, "nottarget" deletes not target obs.
 
 # unlearning settings
 shard_counts <- c(2, 5, 10) # shards
@@ -74,7 +74,13 @@ for (n in sample_sizes) {
       
       # Unlearn individual's index
       customers_to_unlearn <- 1
-      unlearning_index <- sample(1:train.n.sample, customers_to_unlearn)
+      if (unlearning_decision == "random"){
+        unlearning_index <- sample(1:train.n.sample, customers_to_unlearn)
+      } else if(unlearning_decision == "target"){
+        unlearning_index <- sample(which(train$w == 1), customers_to_unlearn)
+      }else if(unlearning_decision == "nottarget"){
+        unlearning_index <- sample(which(train$w == 0), customers_to_unlearn)
+      }
       
       # Split data into "shards" shards
       shard.id <- split(1:length(train$y), cut(sample(1:length(train$y)), breaks = shards, labels = FALSE))
@@ -153,18 +159,18 @@ for (n in sample_sizes) {
 final_perf_results <- do.call(rbind, all_perf_results)
 final_profit_results <- do.call(rbind, all_profit_results)
 
-saveRDS(final_perf_results, "final_perf_results_conf.RDS")
-saveRDS(final_profit_results, "final_profit_results_conf.RDS")
+#saveRDS(final_perf_results, "final_perf_results_conf.RDS")
+#saveRDS(final_profit_results, "final_profit_results_conf.RDS")
 
 # profit plot
 final_profit_results %>%
   group_by(shard, Phi, Model, SampleSize) %>%
-  summarize(mean_profit = mean(Profit), .groups = "drop") %>%
-  pivot_wider(names_from = Model, values_from = mean_profit) %>%
+  pivot_wider(names_from = Model, values_from = Profit) %>%
   mutate(profit_difference = Full - Shard) %>%
   ggplot(aes(x = Phi, y = profit_difference, color = as.factor(shard))) + 
-  geom_line(size = 1) + # Thicker line for better visibility
-  geom_point(size = 1) +  # Add points to emphasize data
+  #geom_line(size = 0.2) + # Thicker line for better visibility
+  stat_summary(fun.data = mean_cl_boot) +
+  #geom_point(size = 1) +  # Add points to emphasize data
   facet_wrap(~SampleSize) +
   labs(
     x = "Phi",

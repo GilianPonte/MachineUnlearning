@@ -1,7 +1,7 @@
 # Function to generate synthetic data for training and evaluation
 gen_test <- function(n.sample, 
                      variables = 5, 
-                     complexity = c("uniform", "normal", "cauchy", "mixed"),
+                     complexity = c("uniform", "normal", "mixed"),
                      confounding = FALSE) {
   
   if (variables < 5){
